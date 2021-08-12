@@ -1,0 +1,454 @@
+---
+title: "Math 23c Final Project"
+author: "Derek Chang"
+date: "05/14/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(ggplot2)
+library(moments)
+```
+
+# Overview of the data - House Listing and Assess Data in MA 
+
+```{r Data}
+
+# Create a dataframe called assessment from Assessment_Data.csv which contains 
+# housing assessment data for towns in Massachusetts
+all <- read_csv("Assessment_Data.csv",
+                col_types = cols(city = col_factor(),
+                                 ls_year = col_factor(),
+                                 price = col_number(),
+                                 assess = col_number(),
+                                 ls_month = col_factor(),
+                                 lot_size = col_number(),
+                                 res_area = col_number(),
+                                 house_age = col_integer(),
+                                 style = col_factor(),
+                                 num_rooms = col_factor(),
+                                 stories = col_number(),
+                                 inc_medianhhd_blkgrp = col_number(),
+                                 age_med_blk = col_number(),
+                                 pop_blk = col_number(),
+                                 black_share = col_number(),
+                                 vacant_share = col_number(),
+                                 latitude = col_number(),
+                                 longitude = col_number(),
+                                 distance_firestation = col_number(),
+                                 distance_hospital = col_number(),
+                                 distance_police = col_number(),
+                                 distance_prischool = col_number(),
+                                 distance_library = col_number(),
+                                 distance_pubschool = col_number(),
+                                 distance_townhall = col_number(),
+                                 distance_train = col_number())) %>%
+  drop_na() %>% 
+  mutate(vacant = ifelse(vacant_share > mean(vacant_share, na.rm = TRUE), TRUE, FALSE)) %>%
+  mutate(high = ifelse(price >= median(price), TRUE, FALSE)) %>%
+  mutate(near_school = ifelse(distance_pubschool < mean(distance_pubschool), "NEAR", "FAR"))
+
+# Create a dataframe called local which contains housing assessment data only for towns 
+# in my area
+
+local <- all %>%
+  #filter(ls_year == 2011) %>%
+  filter(city %in% c("ACTON", "LITTLETON", "GROTON", "WESTFORD", "STOW", "MAYNARD"))
+
+# An overview of the data
+
+head(all[,1:13]); head(all[,14:22]); head(all[,23:29])
+
+```
+
+\newpage
+
+# Graph
+
+```{r Graph}
+# Arrange the ls_month factor based on month number
+all$ls_month <- 
+  factor(all$ls_month, levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))
+
+# Number of listing by month
+listing <- table(all$ls_month); listing
+
+# 1. Barplot
+
+# (11) Nicely labeled graphics using ggplot, with good use of color, line styles, etc., that tell a
+# convincing story
+
+# Clear peak in the summer, fairly steady number of listings from October to December
+# Lowpoint in January and February, with an upward trend in the spring
+as.data.frame(listing) %>%
+  ggplot() + 
+  geom_col(aes(x = Var1, y = Freq), size = 1, color = "white", fill = "blue") +
+  geom_line(aes(x = Var1, y = Freq), size = 1.5, color="red", group = 1) + 
+  labs(title = "Monthly House Listings",
+       subtitle = "for Towns in Massachusetts ",
+       x = "Month",
+       y = "Count") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, face = "bold", 
+                                  color = "darkgreen", hjust = 0.5),
+        plot.subtitle = element_text(size = 10, face = "bold", 
+                                     color = "darkgreen",
+                                     hjust = 0.5))
+
+
+# 2. Histogram
+# 3. Probability density graph overlaid on the histogram
+
+# Distribution of listed prices
+# Skewed to the right
+# Normal distribution fits somewhat well, but not perfectly
+local %>% 
+  ggplot(aes(x = price)) + 
+  geom_histogram(aes(y =..density..),
+                 bins = 30,
+                 colour = "black", 
+                 fill = "white") +
+  stat_function(fun = dnorm, 
+                color = "red", 
+                args = list(mean = mean(local$price), 
+                            sd = sd(local$price))) +
+  labs(title = "Listing Price Distribution",
+       subtitle = "for Towns around My Area",
+       x = "Listing Price",
+       y = "Density") + 
+  scale_x_continuous(labels = scales::comma) +
+  geom_vline(xintercept = mean(local$price), color = "blue") +
+  theme_classic() +
+  theme(plot.title = element_text(size = 16, face = "bold", 
+                                  color = "darkgreen", hjust = 0.3),
+        plot.subtitle = element_text(size = 10, face = "bold", 
+                                     color = "darkgreen",
+                                     hjust = 0.3))
+
+# 4. Contingency table
+
+# Contingency table for whether house is vacant vs. proximity to the public school
+# There are more vacancies close to schools
+# In the next section we will examine if this statistically significant
+tab <- table(local$vacant, local$near_school)
+
+rownames(tab) = c("Occupied", "Vacant")
+colnames(tab) = c("Far", "Near")
+
+plot(tab, xlab = "Vacancy", 
+     ylab = "Proximity to School", 
+     main = "Vacancy vs School Proximity", 
+     col = tab)
+
+```
+
+\newpage
+
+# Analysis
+
+```{r Analysis}
+
+# Calculate the observed list price difference by proximity to public school
+# We might think this relationship is statistically significant because there is less
+# traffic further away from schools
+FarAvg <- sum(all$price*(all$near_school=="FAR"))/sum(all$near_school=="FAR"); FarAvg
+NearAvg <- sum(all$price*(all$near_school=="NEAR"))/sum(all$near_school=="NEAR"); NearAvg
+observed <- FarAvg - NearAvg; observed     # more expensive farther away
+
+# Do 10000 times
+# (10) Professional-looking software engineering (e.g defining and using your own functions)
+doPermTest <- function(dset) {
+  samp <- sample(nrow(dset), sum(dset$near_school == "FAR"))
+  FarAvg <- mean(dset$price[samp])
+  NearAvg <- mean(dset$price[-samp])
+  return(FarAvg - NearAvg)
+}
+
+# Repeat 10000 times
+diffs <- replicate(10000, doPermTest(all))
+
+mean(diffs) #should be close to zero
+
+hist(diffs, 
+     breaks="FD",
+     main = "Price Difference based on School Proximity",
+     xlab = "Far - Near")
+
+#Now display the observed difference on the histogram
+abline(v = observed, col = "red")
+
+#What is the probability (the P value) that a difference this large
+#could have arisen with a random subset?
+pvalue <- mean(diffs >= observed); pvalue
+
+# The p-value = 0.3125 means that there is about 3 chances in 10 that the
+# discrepancy could have arisen by chance. Thus, we can not reject the null hypothesis
+# that there is no difference in the two groups. Thus, the difference in mean list
+# price is not statistically significant as there is a very large chance that the 
+# observed discrepancy arose by chance
+
+#------------------------------------
+# 2. P-value based on distribution function
+
+# Compare distribution of local houses' prices with normal distribution
+
+# Parameter
+mu = mean(local$price)
+sd = sd(local$price)
+
+hist(local$price,
+     main = "Distribution of House Listing Price",
+     breaks = "FD",
+     probability = TRUE,
+     xlab = "Listing Price")
+
+# Overlay a graph of the normal function 
+curve(dnorm(x, mean=mu, sd=sd), add = TRUE, col = "red")
+
+# Not the best fit, as we will see
+
+# Carry out a chi-square goodness of fit test to determine
+# whether the observed data are consistent with this normal distribution 
+# Use quantile function to get 10 bins
+bins <- qnorm(0.1*(0:10), mean=mu, sd=sd); bins
+
+# Apply the cut function to determine which decile each of
+# our data points belong to each bin.
+code <- cut(local$price, bins, labels = FALSE); code
+
+# Construct observed vector
+obs <- as.vector(table(code)); obs
+
+# Construct expected vector 
+exp <- rep(sum(obs)/10, 10); exp
+
+# Its sum should equal the number of observations.
+sum(exp) == length(local$price)
+
+# Calculate chi-square statistic 
+chisq <- sum((obs-exp)^2/exp); chisq # 83.43
+
+# Calculate the p-value 
+# We imposed two parameters to fit the data, so we have 10 - 2 -2 = 7 degrees of freedom
+pv <- pchisq(chisq, df = 7, lower.tail = FALSE); pv
+
+# We get a p-value near 0. Hence, there is close to a 0% chance that we observe a 
+# test statistic this extreme from the relevant Chi-square distribution. Hence, we have 
+# sufficient evidence against the null hypothesis that our data came from a 
+# normal distribution 
+
+#------------------------------------
+# 3. Analysis of a contingency table
+
+# Contingency table for whether house is vacant vs. proximity to the public school
+Observed <- table(local$vacant, local$near_school); Observed
+
+# Proportion vacant
+pVacant <- mean(local$vacant == TRUE); pVacant
+
+# Proportion near public school
+pNear <- mean(local$near_school == "NEAR"); pNear
+
+N <- nrow(local); N
+
+# Here is what we would expect if vacancy and proximity to public school were independent
+# If the proportion of vacancies was equal for near and close
+Expected <- N*outer(c( 1-pVacant, pVacant), c(pNear, 1-pNear)); Expected
+
+chisq <- sum((Observed-Expected)^2/Expected); chisq
+# 13.8
+# Estimate the probability that such a large discrepancy would arise by chance
+pValue <- 1 - pchisq(chisq,1); pValue # nearly a 0% chance
+
+# Hence, we have sufficient evidence against the null hypothesis. There is a small chance that the 
+# observed discrepancy arose by chance. Hence, vacancy and proximity to public school 
+# are likely dependent
+
+#------------------------------------
+# 4. chi-square method
+
+# Contingency table for if house' price is high vs. whether house is vacant
+# There are less vacancies close among higher listed homes
+table(all$high, all$vacant)
+
+# Proportion high
+pHigh <- mean(local$high == TRUE); pHigh
+
+# Proportion vacant
+pVacant <- mean(local$vacant == TRUE); pVacant
+
+N <- nrow(local); N
+
+#Here is what we would expect if house's price and vacancy were independent
+Expected <- N*outer(c( 1-pHigh, pHigh), c(pVacant, 1-pVacant)); Expected
+
+Observed <- table(local$high, local$vacant)
+
+chisq <- sum((Observed-Expected)^2/Expected); chisq
+#It estimates the probability that such a large discrepancy would arise by chance.
+pValue <- 1 - pchisq(chisq,1); pValue # essentially a 0% chance
+
+# Hence, we have sufficient evidence against the null hypothesis. There is a very small chance 
+# that the observed discrepancy arose by chance. Hence, house's price and vacancy are 
+# likely dependent
+
+# 4. CLT
+# We now seek to create a statistic whose distribution is standard normal for the list
+# price of local houses
+hist(local$price, 
+     breaks = "FD", 
+     xlab = "Listing Price", 
+     main = "Histogram of Listing Price")
+
+n <- nrow(local); n
+sigma <- sd(all$price); sigma
+
+# (2) Data set is so large that we can treat all Massachusetts houses be used as a population 
+# from which samples are taken
+
+mu.all <- mean(all$price); mu.all
+mu.local <- mean(local$price); mu.local
+
+# Statistic whose distribution is N(0,1)
+Z = (mu.local-mu.all)/(sigma/sqrt(n)); Z
+
+# Calculate the probability of a sample mean (mean for local houses) as extreme as what we observed
+PValue <- pnorm(Z, lower.tail = FALSE); PValue   # very unlikely
+
+# 4. Simulation methods
+
+# We turn to a Monte Carlo approach to calculate the average size of a local house
+# Use simulation for sample distribution to estimate mean and
+# As n increases, we will get closer to the expected value 
+
+# Actual mean and standard deviation
+res.area.mean <- mean(local$res_area)
+
+# Sample 20 houses randomly from population and estimate the parameter
+# Do 10000 times
+sample.size <- 20
+trials <- 10000
+
+sample.mean <- numeric(trials)
+
+for(i in 1:trials) {
+  
+  sample <- local %>%
+    sample_n(size = sample.size, replace = TRUE)
+  sample.mean[i] = mean(sample$res_area)
+}
+
+# Very good estimate
+avg.Mean <- mean(sample.mean); avg.Mean; res.area.mean
+
+# List price based on house style
+# Colonial and modern tend to be the most expensive, which makes sense
+fit.model <- glm(local$style ~ local$price, data = local, family = binomial)
+
+predicted <- local
+predicted$style <- predict(fit.model, newdata = local, type = "response")
+
+ggplot(predicted, aes(x = local$price, y = local$style)) +
+  geom_line() +
+  labs(title = "Listing Price Range for Various Styles",
+       x = "Listing Price",
+       y = "Style") + 
+  scale_x_continuous(labels = scales::comma) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 12, face = "bold", 
+                                  color = "darkgreen", hjust = 0.3))
+
+#------------------------------------------------------------
+# (13) appropriate use of novel statistics
+
+# Trimmed mean, maximum, minimum, skewness
+hist(all$price, 
+     breaks = 1000, 
+     xlab = "Listing Price", 
+     main = "Histogram of Listing Price")
+
+# Maximum
+max(all$price)
+# Mnimum
+min(all$price)
+
+# Skewness is larger than 1 indicating that list price data is highly positively skewed
+skewness(all$price)
+
+mean(all$price)
+
+# Trimmed mean makes more sense for houses' list price in whole state
+# Removes outliers
+mean(all$price, trim = 0.2)
+
+#------------------------------------
+# (14) use of linear regression
+
+# Relationship between residential area and assessed price for local houses
+# assess = intercept + beta * res_area
+fit.model <- lm(local$assess ~ local$res_area, data = local)
+
+# Positive relationship as seen in the graph
+# The p-value is very small, so our fit moel is statistically significant
+summary(fit.model)
+
+# Residential area is also a good predictor of a houses' assessment value
+# Positive relationship
+scatter.smooth(x = local$res_area, 
+               y = local$assess,
+               xlab = "Res Area",
+               ylab = "Assess",
+               main = "Relationship between Assess and Res Area")
+
+# (16) appropriate use of covariance or correlation
+
+# Calculate the correlation between assessed value and res area
+# Correlation measures the level of linear dependence between two variables
+# Since this value is close to 1, it suggests that there is a strong relationship 
+# between the two variables
+cor(local$assess, local$res_area)
+
+#------------------------------------
+# (20) calculation of confidence interval
+
+# 95% confidence interval
+mu <- mean(local$price)
+sigma <- sd(local$price)
+n <- nrow(local)
+# Upper bound
+lo <- mu - qnorm(0.975)*(sigma/sqrt(n)); lo
+# Lower bound
+hi <- mu + qnorm(0.975) * sigma/sqrt(n); hi
+
+# List prices distributed normally with parameters calculated from dataset local
+curve(dnorm(x,mu,sigma/sqrt(n)), 
+      from = mu - 3*sigma/sqrt(n), 
+      to = mu + 3*sigma/sqrt(n),
+      xlab = "Listing Price",
+      ylab = "Density",
+      main = "Listing Price Distribution for Local Towns")
+
+abline(v = c(lo,hi), col = "red")
+
+# If a house is newly listed in the local area, I can predict that there is with a 95%
+# chance that its list price is between lo and hi
+
+#------------------------------------
+# (21) appropiate use of quantiles to compare distributions
+
+# All
+quantile(all$price, .25) # get 1st quantile
+quantile(all$price, .75) # get 3rd quantile
+
+# Local
+quantile(local$price, .25) # get 1st quantile
+quantile(local$price, .75) # get 3rd quantile
+
+# Comparing 1st and 3rd quantile pricing data, the local area has relatively higher
+# housing prices versus other Massachusetts towns
+
+```
